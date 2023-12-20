@@ -3,8 +3,9 @@ from app import app, db
 from app.forms import LoginForm, RegistrationForm, EditProfileForm, EmptyForm
 from flask_login import current_user, login_user, logout_user, login_required
 from app.models import User
-from werkzeug.urls import url_parse
-from datetime import datetime
+from urllib.parse import urlsplit
+import sqlalchemy as sa
+from datetime import datetime, timezone
 
 @app.route('/')
 @app.route('/index')
@@ -32,13 +33,14 @@ def login():
         return redirect(url_for('index'))
     form = LoginForm()
     if form.validate_on_submit():
-        user = User.query.filter_by(username=form.username.data).first()
+        user = db.session.scalar(
+            sa.select(User).where(User.username == form.username.data))
         if user is None or not user.check_password(form.password.data):
             flash('Invalid username or password')
             return redirect(url_for('login'))
         login_user(user, remember=form.remember_me.data)
         next_page = request.args.get('next')
-        if not next_page or url_parse(next_page).netloc != '':
+        if not next_page or urlsplit(next_page).netloc != '':
             next_page = url_for('index')
         return redirect(next_page)
     return render_template('login.html', title='Sign In', form=form)
@@ -65,7 +67,7 @@ def register():
 @app.route('/user/<username>')
 @login_required
 def user(username):
-    user = User.query.filter_by(username=username).first_or_404()
+    user = db.first_or_404(sa.select(User).where(User.username == username))
     posts = [
             {'author': user, 'body': 'Test post #1'},
             {'author': user, 'body': 'Test post #2'}
@@ -76,7 +78,7 @@ def user(username):
 @app.before_request
 def before_request():
     if current_user.is_authenticated:
-        current_user.last_seen = datetime.utcnow()
+        current_user.last_seen = datetime.now(timezone.utc)
         db.session.commit()
 
 @app.route('/edit_profile', methods=['GET', 'POST'])
@@ -99,35 +101,38 @@ def edit_profile():
 def follow(username):
     form = EmptyForm()
     if form.validate_on_submit():
-        user = User.query.filter_by(username=username).first()
+        user = db.session.scalar(
+            sa.select(User).where(User.username == username))
         if user is None:
-            flash('User {} not found.'.format(username))
+            flash(f'User {username} not found.')
             return redirect(url_for('index'))
         if user == current_user:
             flash('You cannot follow yourself!')
             return redirect(url_for('user', username=username))
         current_user.follow(user)
         db.session.commit()
-        flash('You are following {}!'.format(username))
+        flash(f'You are following {username}!')
         return redirect(url_for('user', username=username))
     else:
         return redirect(url_for('index'))
+
 
 @app.route('/unfollow/<username>', methods=['POST'])
 @login_required
 def unfollow(username):
     form = EmptyForm()
     if form.validate_on_submit():
-        user = User.query.filter_by(username=username).first()
+        user = db.session.scalar(
+            sa.select(User).where(User.username == username))
         if user is None:
-            flash('User {} not found.'.format(username))
+            flash(f'User {username} not found.')
             return redirect(url_for('index'))
         if user == current_user:
             flash('You cannot unfollow yourself!')
             return redirect(url_for('user', username=username))
         current_user.unfollow(user)
         db.session.commit()
-        flash('You are not following {}.'.format(username))
+        flash(f'You are not following {username}.')
         return redirect(url_for('user', username=username))
     else:
         return redirect(url_for('index'))
